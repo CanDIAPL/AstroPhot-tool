@@ -7,7 +7,10 @@ Example:
 
 import argparse
 import json
+import math
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -63,9 +66,18 @@ def prepare_inputs(config, base_dir):
         mask_pixels, _ = read_fits(entry["mask"], base_dir)
         mask = mask_pixels != 0
         psf, _ = read_fits(entry["psf"], base_dir)
+        for label, array in (("variance", variance), ("mask", mask)):
+            if array.shape != image.shape:
+                raise ValueError(
+                    f"{label} shape {array.shape} does not match image shape "
+                    f"{image.shape}: {entry['name']}"
+                )
         wcs = WCS(header)
         if not wcs.array_shape == image.shape:
             raise ValueError(f"WCS array shape does not match image shape: {entry['name']}")
+        # Without sky axes astropy silently falls back to pixel coordinates
+        if not wcs.has_celestial:
+            raise ValueError(f"No RA/Dec WCS in the image header: {entry['name']}")
         values = (entry["name"], image, variance, mask, psf, wcs)
         for key, value in zip(args, values, strict=True):
             args[key].append(value)
@@ -80,6 +92,24 @@ def prepare_inputs(config, base_dir):
     return args
 
 
+def finite_or_none(value):
+    """
+    Replace NaN and infinite numbers by None (JSON null), at any depth.
+
+    JSON has no NaN, and a failed fit can leave one in a value or uncertainty.
+    Returns the cleaned copy and the number of values replaced.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return None, 1
+    if isinstance(value, dict):
+        cleaned = {key: finite_or_none(item) for key, item in value.items()}
+        return {k: v for k, (v, _) in cleaned.items()}, sum(n for _, n in cleaned.values())
+    if isinstance(value, (list, tuple)):
+        cleaned = [finite_or_none(item) for item in value]
+        return [v for v, _ in cleaned], sum(n for _, n in cleaned)
+    return value, 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -90,16 +120,24 @@ def main():
     )
     cli = parser.parse_args()
 
-    with cli.config.open(encoding="utf-8") as stream:
+    # Absolute paths, since the working directory changes below
+    config_file = cli.config.resolve()
+    output_dir = cli.output_dir.resolve()
+    with config_file.open(encoding="utf-8") as stream:
         config = json.load(stream)
-    config_dir = cli.config.resolve().parent
-    kwargs = prepare_inputs(config, config_dir)
+
+    # AstroPhot creates AstroPhot.log in the working directory when it is
+    # imported, and fails if it can not. Work from a fresh temporary directory
+    # so this does not depend on where the container was started.
+    os.chdir(tempfile.mkdtemp(prefix="astrophot-"))
+
+    kwargs = prepare_inputs(config, config_file.parent)
 
     from AstroPhot_tool import joint_multi_image
 
-    cli.output_dir.mkdir(parents=True, exist_ok=True)
-    result_path = cli.output_dir / "results.json"
-    config_path = cli.output_dir / "config.used.json"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result_path = output_dir / "results.json"
+    config_path = output_dir / "config.used.json"
     if result_path.exists() or config_path.exists():
         raise FileExistsError(
             "Use a new output directory for each run; result/config already exists"
@@ -111,6 +149,10 @@ def main():
 
     results = joint_multi_image(**kwargs)
 
+    # Never lose a finished fit to a single NaN: write those as null
+    results, replaced = finite_or_none(results)
+    if replaced:
+        print(f"Warning: {replaced} non-finite result value(s) written as null", file=sys.stderr)
     result_json = json.dumps(results, indent=2, allow_nan=False)
     with result_path.open("x", encoding="utf-8") as stream:
         stream.write(result_json + "\n")

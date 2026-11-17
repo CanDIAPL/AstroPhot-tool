@@ -5,8 +5,13 @@ The images are defined once, in `IMAGES`, and handed to the tests by the
 fixtures in ``conftest.py``.
 """
 
+import json
+import sys
+from pathlib import Path
+
 import astrophot as ap
 import numpy as np
+from astropy.io import fits
 from astropy.wcs import WCS
 
 from AstroPhot_tool.utils import build_model, build_target
@@ -159,3 +164,51 @@ def fake_dataset(seed=42):
         variance.append(var)
 
     return dict(inputs, cutout=cutout, variance=variance, clean=clean, positions=POSITIONS)
+
+
+def write_fits_inputs(directory, dataset):
+    """
+    Write a `fake_dataset` as the input files of ``container_entrypoint.py``:
+    FITS files with a config.json beside them, the way a cutout service would
+    hand them over. Image, variance and mask share one file per cutout
+    (extensions SCI, VAR, MASK), the PSF has its own. Returns the config.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    cutouts = []
+    for i, name in enumerate(dataset["cutout_name"]):
+        stem = name.replace("-", "_")
+        header = dataset["wcs"][i].to_header()
+        fits.HDUList(
+            [
+                fits.PrimaryHDU(),
+                # big-endian float32, as most archives serve them
+                fits.ImageHDU(dataset["cutout"][i].astype(">f4"), header=header, name="SCI"),
+                fits.ImageHDU(dataset["variance"][i].astype(">f4"), name="VAR"),
+                fits.ImageHDU(dataset["mask"][i].astype(np.uint8), name="MASK"),
+            ]
+        ).writeto(directory / f"{stem}.fits")
+        fits.PrimaryHDU(dataset["psf"][i]).writeto(directory / f"{stem}_psf.fits")
+        cutouts.append(
+            dict(
+                name=name,
+                image=dict(path=f"{stem}.fits", hdu="SCI"),  # relative to the config
+                variance=dict(path=f"{stem}.fits", hdu="VAR"),
+                mask=dict(path=f"{stem}.fits", hdu="MASK"),
+                psf=dict(path=f"{stem}_psf.fits"),
+            )
+        )
+    models = [
+        dict(name=name, type=model_type, ra=float(ra), dec=float(dec))
+        for name, model_type, (ra, dec) in zip(MODEL_NAMES, MODEL_TYPES, dataset["positions"])
+    ]
+    config = dict(cutouts=cutouts, models=models)
+    (directory / "config.json").write_text(json.dumps(config, indent=2))
+    return config
+
+
+if __name__ == "__main__":
+    # python fake_data.py DIRECTORY: used by the docker image test in
+    # .github/workflows/harbor.yml to give the container something to fit.
+    write_fits_inputs(sys.argv[1], fake_dataset())
+    print(f"Fake cutouts and config.json written to {sys.argv[1]}")
