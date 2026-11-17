@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AstroPhot_tool"
+version = "0.1.0"
+description = "Joint multi-image AstroPhot fitting of cutouts from many observatories"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = ["astrophot>=0.18", "astropy", "numpy", "scipy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["ignore::DeprecationWarning"]
