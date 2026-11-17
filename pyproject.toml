@@ -7,11 +7,24 @@ name = "AstroPhot_tool"
 version = "0.1.0"
 description = "Joint multi-image AstroPhot fitting of cutouts from many observatories"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
-dependencies = ["astrophot>=0.18", "astropy", "numpy", "scipy"]
+requires-python = ">=3.11,<3.14"
+# Exact pins: this tool runs on its own in a container, so a reproducible build
+# matters more than being installable next to other packages. This set is
+# tested on Python 3.11, 3.12 and 3.13 by .github/workflows/tests.yml, change
+# the versions together and only with the tests passing.
+dependencies = [
+    "astrophot==0.18.0",
+    "astropy==8.0.2",
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    # Not imported by this package, but AstroPhot is built on them and only
+    # asks for torch>=2.0 and caskade<1.2, so they are fixed here as well.
+    "torch==2.15.0",
+    "caskade==1.1.5",
+]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest==9.2.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
