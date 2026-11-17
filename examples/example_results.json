@@ -1,0 +1,38 @@
+{
+  "message": "success",
+  "chi2_ndf": 1.004801711549863,
+  "iterations": 6,
+  "crval": [150.1234, 2.234499999999997],
+  "models": {
+    "galaxy": {
+      "model_type": "sersic galaxy model",
+      "ra": 150.12351177537684,
+      "dec": 2.2344161588709177,
+      "shared": {
+        "center": {"value": [0.4020854093420319, -0.30182804939314817], "uncertainty": [0.0036245131856979507, 0.002902030218686784], "units": "arcsec"},
+        "q": {"value": 0.6063963079658738, "uncertainty": 0.007467061804354338, "units": "b/a"},
+        "PA": {"value": 1.0425489622053425, "uncertainty": 0.011912001230834213, "units": "radians"},
+        "n": {"value": 1.7849542450147198, "uncertainty": 0.035195640907488425, "units": "none"},
+        "Re": {"value": 1.1853508351338111, "uncertainty": 0.01835098662422308, "units": "arcsec"}
+      },
+      "per_image": {
+        "HST_F814W": {"Ie": {"value": 2.0358754047996577, "uncertainty": 0.05520276649200882, "units": "flux/arcsec^2"}},
+        "ground_r": {"Ie": {"value": 823.9991355389333, "uncertainty": 23.717144086404407, "units": "flux/arcsec^2"}},
+        "GALEX-FUV": {"Ie": {"value": 0.029886939329839268, "uncertainty": 0.0013672400704564749, "units": "flux/arcsec^2"}}
+      }
+    },
+    "star": {
+      "model_type": "point model",
+      "ra": 150.12242714263948,
+      "dec": 2.235194522430552,
+      "shared": {
+        "center": {"value": [-3.499621776080323, 2.500281908915861], "uncertainty": [0.00018118786084194856, 0.00019678075321321353], "units": "arcsec"}
+      },
+      "per_image": {
+        "HST_F814W": {"flux": {"value": 29.956445095769272, "uncertainty": 0.12308103323823424, "units": "flux"}},
+        "ground_r": {"flux": {"value": 5918.315185455752, "uncertainty": 65.5449956262845, "units": "flux"}},
+        "GALEX-FUV": {"flux": {"value": 0.10781370440549011, "uncertainty": 0.009306156447560797, "units": "flux"}}
+      }
+    }
+  }
+}
