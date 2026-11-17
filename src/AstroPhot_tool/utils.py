@@ -137,7 +137,7 @@ def build_target(
     new_crval = np.array(wcs[0].pixel_to_world_values((W1 - 1) / 2, (H1 - 1) / 2))
     for c, v, m, p, w, n in zip(cutout, variance, mask, psf, wcs, cutout_name, strict=True):
         bad = ~(np.isfinite(v) & (v > 0))
-        v = np.where(bad, 1.0, v)  # a new array, the caller's variance is not modified
+        v = np.where(bad, 1.0, v)
         m = m | bad
         p = p / np.sum(p)
         n = safe_name(n)

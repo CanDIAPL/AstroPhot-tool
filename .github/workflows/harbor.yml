@@ -1,0 +1,135 @@
+# Save this file as .github/workflows/harbor.yml in CanDIAPL/AstroPhot-tool.
+# Adapted from canfar-comet/app.py::_build_docker_workflow_yaml, with the same
+# six HARBOR_* secret names. This publishes a container image; it does not
+# start a CANFAR session, run a science job, or publish the Python package.
+# Keep any PyPI workflow as a separate workflow in the same repository.
+name: Test and publish AstroPhot-tool to CANFAR Harbor
+
+on:
+  release: {types: [published]}
+  workflow_dispatch: # Adds Actions > Run workflow after this file is on main.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harbor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # These action majors match the current COMET generator. Pin reviewed
+      # action commit SHAs if your repository requires immutable action versions.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # Keep this aligned with the Dockerfile.
+
+      - name: Install the package and its test dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # CPU wheels keep this starter independent of CUDA/GPU hardware.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install '.[dev]'
+
+      - name: Run the existing AstroPhot-tool tests
+        env:
+          MPLBACKEND: Agg
+          OMP_NUM_THREADS: '2'
+          MKL_NUM_THREADS: '2'
+        run: python -m pytest -q
+
+  publish:
+    needs: tests
+    # Also protects the shared tag from a manual feature-branch run.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Settings > Secrets and variables > Actions > Repository secrets.
+      # COMET can populate these. A manual setup uses the same names:
+      HARBOR_URL: ${{ secrets.HARBOR_URL }} # images.canfar.net (no https:// or /)
+      HARBOR_PROJECT: ${{ secrets.HARBOR_PROJECT }} # e.g. candiapl
+      HARBOR_REPOSITORY: ${{ secrets.HARBOR_REPOSITORY }} # e.g. astrophot-tool
+      HARBOR_IMAGE_TAG: ${{ secrets.HARBOR_IMAGE_TAG }} # e.g. main, dev, or v0.1.0
+      # Username + Harbor CLI secret, OR a project robot account + its token.
+      # A CADC browser-login password is not the Harbor CLI secret.
+      HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+      HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration and construct image names
+        run: |
+          set -euo pipefail
+          for key in HARBOR_URL HARBOR_PROJECT HARBOR_REPOSITORY HARBOR_IMAGE_TAG HARBOR_USERNAME HARBOR_PASSWORD; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing Actions secret: $key"
+              exit 1
+            fi
+          done
+          # Validate public reference components without printing secret values.
+          [[ "$HARBOR_URL" =~ ^[a-z0-9.-]+(:[0-9]+)?$ ]] || { echo '::error::HARBOR_URL must be a registry host, optionally with a port'; exit 1; }
+          [[ "$HARBOR_PROJECT" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || { echo '::error::Use a lowercase Harbor project name'; exit 1; }
+          [[ "$HARBOR_REPOSITORY" =~ ^[a-z0-9]+([._-][a-z0-9]+)*$ ]] || { echo '::error::Use one lowercase image repository name'; exit 1; }
+          [[ "$HARBOR_IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]] || { echo '::error::Invalid image tag'; exit 1; }
+          image="$HARBOR_URL/$HARBOR_PROJECT/$HARBOR_REPOSITORY"
+          printf 'IMAGE_REF=%s:%s\n' "$image" "$HARBOR_IMAGE_TAG" >> "$GITHUB_ENV"
+          printf 'COMMIT_REF=%s:sha-%s\n' "$image" "$GITHUB_SHA" >> "$GITHUB_ENV"
+
+      - name: Log in to Harbor
+        run: |
+          set -euo pipefail
+          printf '%s' "$HARBOR_PASSWORD" | docker login "$HARBOR_URL" \
+            --username "$HARBOR_USERNAME" --password-stdin
+
+      - name: Build the headless docker image
+        run: |
+          set -euo pipefail
+          # The final '.' is the build context: this repository's root.
+          # For another layout use: --file path/to/Dockerfile path/to/context
+          # linux/amd64 is the starter target; ARM/multi-platform builds need
+          # a tested Buildx/QEMU setup and matching scientific dependencies.
+          docker build --pull --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE_REF" --tag "$COMMIT_REF" .
+
+      - name: Check the container interface
+        run: |
+          set -euo pipefail
+          docker run --rm "$COMMIT_REF" --help
+          docker run --rm --entrypoint python "$COMMIT_REF" \
+            -c 'from AstroPhot_tool import joint_multi_image; print("AstroPhot import OK")'
+
+      - name: Push both tags to Harbor
+        run: |
+          set -euo pipefail
+          # The SHA tag makes the source revision explicit. Tags are still
+          # mutable unless Harbor protects them; use the image digest for a
+          # particular science run and save that digest alongside its config.
+          docker push "$COMMIT_REF"
+          docker push "$IMAGE_REF"
+
+      - name: Log out of Harbor
+        if: always()
+        run: docker logout "$HARBOR_URL"
+
+# Optional changes:
+# - Multiple images: copy the publish job or use a matrix of Dockerfile/context
+#   and Harbor repository values. Each logical science step can have its own
+#   image; it need not have its own GitHub repository.
+# - Build caching: switch build/push to docker/setup-buildx-action and
+#   docker/build-push-action when the basic workflow is working.
+# - Harbor visibility: after publishing, apply the 'headless' artifact label
+#   in Harbor if the image should appear in CANFAR's headless image listing.
+#   A Dockerfile LABEL is not a substitute for that Harbor registry label.
