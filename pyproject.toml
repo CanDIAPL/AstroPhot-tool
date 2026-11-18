@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling==1.33.0", "hatch-vcs==0.5.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "AstroPhot_tool"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Joint multi-image AstroPhot fitting of cutouts from many observatories"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.14"
@@ -26,8 +26,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest==9.2.0"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# The version is the git tag (a GitHub release creates one): tag "v0.2.0" gives
+# version 0.2.0, and commits after it something like 0.2.1.dev3+g1a2b3c4.
+# A build without the git history can not see the tag: the Dockerfile is given
+# the version by .github/workflows/harbor.yml, anything else gets the fallback.
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/AstroPhot_tool"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

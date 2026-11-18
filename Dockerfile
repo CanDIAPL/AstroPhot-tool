@@ -33,7 +33,11 @@ COPY container_entrypoint.py ./container_entrypoint.py
 # The second check imports the package, as root. That import writes
 # AstroPhot.log here and a matplotlib font cache in MPLCONFIGDIR: the log is
 # removed and the cache is opened up so any runtime user can reuse it.
-RUN python -m pip install --no-cache-dir . \
+# The package version normally comes from the git tag, but the git history is
+# not copied in here, so it is given as a build argument (harbor.yml passes
+# the release tag): docker build --build-arg VERSION=0.2.0 .
+ARG VERSION=0.0.0
+RUN SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION" python -m pip install --no-cache-dir . \
         --extra-index-url https://download.pytorch.org/whl/cpu \
     && python -c "import torch; assert torch.__version__.endswith('+cpu'), torch.__version__" \
     && python -c "from AstroPhot_tool import joint_multi_image" \

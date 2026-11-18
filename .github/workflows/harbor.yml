@@ -76,13 +76,25 @@ jobs:
       # Build
       ########################################################################
       - name: Build the headless docker image
+        env:
+          # The release's tag (e.g. v0.1.0), empty for any other run.
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          # Version of the Python package inside the image: the release tag
+          # without its leading "v" (it must be a version number, e.g.
+          # v0.1.0 or v0.1.0rc1). Any other run is a development build,
+          # marked with the commit it was built from.
+          version="${RELEASE_TAG#v}"
+          version="${version:-0.0.0.dev0+g${GITHUB_SHA::7}}"
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
           # The final '.' is the build context: this repository's root.
           # For another layout use: --file path/to/Dockerfile path/to/context
           # linux/amd64 is the starter target; ARM/multi-platform builds need
           # a tested Buildx/QEMU setup and matching scientific dependencies.
           docker build --pull --platform linux/amd64 \
+            --build-arg "VERSION=$version" \
+            --label "org.opencontainers.image.version=$version" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag "$LOCAL_IMAGE" .
@@ -98,6 +110,11 @@ jobs:
           docker run --rm "$LOCAL_IMAGE"
           docker run --rm --entrypoint python "$LOCAL_IMAGE" \
             -c 'from AstroPhot_tool import joint_multi_image; print("AstroPhot import OK")'
+          # The installed package has the version this build was given
+          installed="$(docker run --rm --entrypoint python "$LOCAL_IMAGE" \
+            -c 'from importlib.metadata import version; print(version("AstroPhot_tool"))')"
+          echo "AstroPhot_tool version in the image: $installed"
+          [[ "$installed" == "$PACKAGE_VERSION" ]]
 
       - name: Run a fit inside the container
         run: |
