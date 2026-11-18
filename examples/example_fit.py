@@ -3,7 +3,7 @@ Example joint fit, makes the figure and results shown in the README.
 
 A fake galaxy with a nearby star is observed by three very different
 instruments (see ``tests/fake_data.py``), fit with `joint_multi_image`, and the
-fitted model is drawn next to the data.
+model and residual images it returns are drawn next to the data.
 
     python examples/example_fit.py
 
@@ -24,39 +24,13 @@ from matplotlib.colors import AsinhNorm, LinearSegmentedColormap
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / "src"), str(HERE.parent / "tests")]
 
-import astrophot as ap  # noqa: E402
 import fake_data  # noqa: E402
-from AstroPhot_tool import joint_multi_image, utils  # noqa: E402
+from AstroPhot_tool import joint_multi_image  # noqa: E402
 
 INK, MUTED, SURFACE = "#0b0b0b", "#52514e", "#fcfcfb"
 # brightness: one hue, light to dark. residuals: two hues around a neutral gray
 BRIGHTNESS = LinearSegmentedColormap.from_list("brightness", [SURFACE, INK])
 RESIDUAL = LinearSegmentedColormap.from_list("residual", ["#2a78d6", "#f0efec", "#e34948"])
-
-
-def render(results, dataset):
-    """
-    Images of the fitted model, rebuilt from the results dictionary alone.
-
-    The fitted values are given to `build_model` as its starting point and the
-    model is sampled without fitting again.
-    """
-    target = utils.build_target(
-        *(dataset[key] for key in ("cutout_name", "cutout", "variance", "mask", "psf", "wcs"))
-    )
-    fits = list(results["models"].values())
-    model = utils.build_model(
-        target,
-        list(results["models"]),
-        [fit["model_type"] for fit in fits],
-        np.array([[fit["ra"], fit["dec"]] for fit in fits]),
-        [{k: v["value"] for k, v in fit["shared"].items() if k != "center"} for fit in fits],
-    )
-    for group, fit in zip(model.models, fits):
-        for sub_model, fluxes in zip(group.models, fit["per_image"].values()):
-            for key, entry in fluxes.items():
-                sub_model[key].value = entry["value"]
-    return [ap.backend.to_numpy(image) for image in model().data]
 
 
 def compact_json(results):
@@ -85,7 +59,8 @@ def compact_json(results):
     return text
 
 
-def figure(dataset, model_images, results):
+def figure(dataset, images, results):
+    """Data, fitted model and residual of every cutout, from the outputs of the fit."""
     names = dataset["cutout_name"]
     scale_bars = [2, 10, 30]  # arcsec, one per image
     # one row per image, as tall as its cutout, and a thin row for the color bar
@@ -94,7 +69,7 @@ def figure(dataset, model_images, results):
     grid = fig.add_gridspec(len(names) + 1, 3, height_ratios=heights)
     axes = np.array([[fig.add_subplot(grid[r, c]) for c in range(3)] for r in range(len(names))])
     for row, (name, spec) in enumerate(fake_data.IMAGES.items()):
-        data, model, variance = dataset["cutout"][row], model_images[row], dataset["variance"][row]
+        data, model = dataset["cutout"][row], images[name]["model"]
         H, W = data.shape
         extent = [-0.5, W - 0.5, -0.5, H - 0.5]
         sky = spec["sky_sigma"]
@@ -103,8 +78,9 @@ def figure(dataset, model_images, results):
         kwargs = dict(origin="lower", extent=extent, interpolation="nearest")
         axes[row, 0].imshow(data, cmap=BRIGHTNESS, norm=norm, **kwargs)
         axes[row, 1].imshow(model, cmap=BRIGHTNESS, norm=norm, **kwargs)
+        # already in units of the noise: (data - model) * sqrt(weight)
         residual = axes[row, 2].imshow(
-            (data - model) / np.sqrt(variance), cmap=RESIDUAL, vmin=-4, vmax=4, **kwargs
+            images[name]["residual"], cmap=RESIDUAL, vmin=-4, vmax=4, **kwargs
         )
 
         scale = spec["pixelscale"]
@@ -144,7 +120,7 @@ if __name__ == "__main__":
     dataset = fake_data.fake_dataset(seed=42)
     # start 0.1 arcsec away from the true positions, everything else automatic
     init_pos = dataset["positions"] + np.random.default_rng(1).normal(size=(2, 2)) * 0.1 / 3600
-    results = joint_multi_image(
+    results, images = joint_multi_image(
         cutout_name=dataset["cutout_name"],
         cutout=dataset["cutout"],
         variance=dataset["variance"],
@@ -157,6 +133,6 @@ if __name__ == "__main__":
         init_params=[{}, {}],
     )
     (HERE / "example_results.json").write_text(compact_json(results) + "\n")
-    fig = figure(dataset, render(results, dataset), results)
+    fig = figure(dataset, images, results)
     fig.savefig(HERE / "example_fit.png", dpi=110, facecolor=fig.get_facecolor())
     print(f"chi2/ndf = {results['chi2_ndf']:.4f}, written to {HERE}")

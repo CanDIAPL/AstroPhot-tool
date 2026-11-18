@@ -10,7 +10,8 @@ import fake_data
 
 
 @pytest.fixture(scope="module")
-def result(dataset):
+def fit(dataset):
+    """Both outputs of `joint_multi_image`: the results and the diagnostic images."""
     rng = np.random.default_rng(1)
     # Start 0.1 arcsec away from the true positions, everything else automatic
     init_pos = dataset["positions"] + rng.normal(size=(2, 2)) * 0.1 / 3600
@@ -26,6 +27,16 @@ def result(dataset):
         init_pos=init_pos,
         init_params=[{}, {}],
     )
+
+
+@pytest.fixture(scope="module")
+def result(fit):
+    return fit[0]
+
+
+@pytest.fixture(scope="module")
+def diagnostics(fit):
+    return fit[1]
 
 
 def test_fake_dataset(dataset):
@@ -86,3 +97,26 @@ def test_fit_fluxes(result):
                 # The blended far UV fluxes are the least certain
                 rtol = 0.5 if image_name == "GALEX-FUV" else 0.1
                 _check(per_image[image_name][key], truth, rtol=rtol)
+
+
+def test_fit_images(result, diagnostics, dataset):
+    """A model and a noise scaled residual image on the pixel grid of every cutout."""
+    assert list(diagnostics) == dataset["cutout_name"]  # names as given
+    chi2, pixels = 0.0, 0
+    for name, cutout, variance, clean in zip(
+        dataset["cutout_name"], dataset["cutout"], dataset["variance"], dataset["clean"]
+    ):
+        model, residual = diagnostics[name]["model"], diagnostics[name]["residual"]
+        assert set(diagnostics[name]) == {"model", "residual"}
+        assert model.shape == residual.shape == cutout.shape
+        np.testing.assert_allclose(residual, (cutout - model) / np.sqrt(variance), rtol=1e-9)
+        # The fitted model is the noiseless scene: the same total light, and
+        # the same image to within the noise of a pixel or so
+        assert np.sum(model) == pytest.approx(np.sum(clean), rel=0.02)
+        assert np.max(np.abs(model - clean) / np.sqrt(variance)) < 3
+        # Nothing left but noise
+        assert np.std(residual) == pytest.approx(1, abs=0.05)
+        chi2 += np.sum(residual**2)
+        pixels += residual.size
+    # The residual images are the chi squared of the fit (14 parameters, ~64000 pixels)
+    assert chi2 / (pixels - 14) == pytest.approx(result["chi2_ndf"], rel=1e-6)

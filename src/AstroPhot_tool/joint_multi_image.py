@@ -2,7 +2,13 @@ import astrophot as ap
 import numpy as np
 from astropy.wcs import WCS
 
-from AstroPhot_tool.utils import build_target, build_model, initialize_fluxes, fit_results
+from AstroPhot_tool.utils import (
+    build_target,
+    build_model,
+    initialize_fluxes,
+    fit_results,
+    fit_images,
+)
 
 
 def joint_multi_image(
@@ -16,7 +22,7 @@ def joint_multi_image(
     model_types: list[str],  # M[str]
     init_pos: np.ndarray,  # (M, 2)
     init_params: list[dict[str, np.ndarray]],  # M[dict[str, np.ndarray]]
-) -> dict:
+) -> tuple[dict, dict[str, dict[str, np.ndarray]]]:
     """
     Jointly fits multiple cutout images with a hierarchical model.
 
@@ -61,9 +67,16 @@ def joint_multi_image(
 
     Returns
     -------
-    dict
+    results : dict
         Fitted parameters with uncertainties and fit statistics, see
-        `AstroPhot_tool.utils.fit_results` for the layout.
+        `AstroPhot_tool.utils.fit_results` for the layout. Plain python types
+        only, so it can be written as JSON.
+    images : dict[str, dict[str, np.ndarray]]
+        Diagnostic images of the fit. For each cutout name, ``"model"`` is the
+        fitted scene on the pixel grid of that cutout (in its flux units) and
+        ``"residual"`` is ``(data - model) * sqrt(weight)``, the residual in
+        units of the noise, with NaN in masked pixels. See
+        `AstroPhot_tool.utils.fit_images`.
     """
     # Make target image list
     target = build_target(cutout_name, cutout, variance, mask, psf, wcs)
@@ -76,5 +89,5 @@ def joint_multi_image(
     initialize_fluxes(model)
     fitter = ap.fit.LM(model, verbose=0).fit()
 
-    # Return the fit result
-    return fit_results(model, fitter, cutout_name, model_names)
+    # Return the fit result and the images of the fitted model
+    return fit_results(model, fitter, cutout_name, model_names), fit_images(model, cutout_name)

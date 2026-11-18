@@ -524,3 +524,34 @@ def test_fit_results_layout(target):
     np.testing.assert_allclose([star["ra"], star["dec"]], POSITIONS[1], atol=1e-6)
     assert set(star["shared"]) == {"center"}
     assert set(star["per_image"]["r"]) == {"flux"}
+
+
+###############################################################################
+# fit_images
+###############################################################################
+def test_fit_images(target):
+    truth = [d.numpy() for d in scene_with_fluxes(target)().data]
+    # Data which is 3 sigma above the true model everywhere, with one bad region
+    inputs = image_inputs([t + 3 * 0.5 for t in truth], variance=0.25)
+    inputs["mask"][1][10:14, 20:24] = True
+    inputs["variance"][2][5, 7] = np.nan  # masked by `build_target`
+    model = scene_with_fluxes(utils.build_target(**inputs))
+    cutout_names = ["HST/ACS F814W", "r", "GALEX-FUV"]  # as the user named them
+    images = utils.fit_images(model, cutout_names)
+
+    assert list(images) == cutout_names
+    for name, expected, spec in zip(cutout_names, truth, IMAGES.values()):
+        assert set(images[name]) == {"model", "residual"}
+        model_image, residual = images[name]["model"], images[name]["residual"]
+        # numpy arrays in the orientation of the input cutout (rows, columns)
+        assert model_image.shape == residual.shape == spec["shape"]
+        assert model_image.flags.c_contiguous and model_image.dtype == np.float64
+        np.testing.assert_allclose(model_image, expected, rtol=1e-12)
+        np.testing.assert_allclose(residual[np.isfinite(residual)], 3.0, rtol=1e-9)
+
+    # only masked pixels are NaN, whether masked by the user or by a bad variance
+    masked = [np.isnan(images[name]["residual"]) for name in cutout_names]
+    assert not masked[0].any()
+    assert masked[1].sum() == 16 and masked[1][10:14, 20:24].all()
+    assert masked[2].sum() == 1 and masked[2][5, 7]
+    assert all(np.isfinite(images[name]["model"]).all() for name in cutout_names)

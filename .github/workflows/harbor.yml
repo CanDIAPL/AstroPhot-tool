@@ -117,6 +117,12 @@ jobs:
           jq -e '(.message | test("success")) and (.chi2_ndf > 0.97) and (.chi2_ndf < 1.03)' \
             smoke/output/results.json
           jq '{message, chi2_ndf, iterations}' smoke/output/results.json
+          # A model and a residual image was written for each of the three cutouts
+          jq -e '[.images[][]] | length == 6' smoke/output/results.json
+          for file in $(jq -r '.images[][]' smoke/output/results.json); do
+            test -s "smoke/output/$file"
+          done
+          ls -l smoke/output
 
       ########################################################################
       # Publish (skipped for pull requests and feature branches)

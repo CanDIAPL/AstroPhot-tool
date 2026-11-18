@@ -39,7 +39,7 @@ default (CUDA) build.
 ```python
 from AstroPhot_tool import joint_multi_image
 
-results = joint_multi_image(
+results, images = joint_multi_image(
     cutout_name,   # N names
     cutout,        # N arrays (H, W)
     variance,      # N arrays (H, W)
@@ -71,8 +71,15 @@ objects (models); every list is in the same cutout or model order. H, W and Hp,
 Wp are array shapes in pixels (rows, columns), which may be different for every
 cutout.*
 
-All inputs are required. The function returns a dictionary which can be written
-directly as JSON, see [Output](#output).
+All inputs are required. The function returns two things, see
+[Output](#output):
+
+- `results`, a dictionary of the fitted parameters, their uncertainties and the
+  fit statistics. It holds plain Python types and can be written directly as
+  JSON.
+- `images`, the diagnostic images of the fit. `images[name]["model"]` is the
+  fitted model of the cutout called `name` and `images[name]["residual"]` its
+  residual in units of the noise, both arrays with the shape of that cutout.
 
 The flux-like AstroPhot parameters (`I0`, `I`, `Ie`, `I_R`, `Ib`, `flux`,
 `weights`, `delta`) are fit separately in every cutout. Every other parameter
@@ -81,8 +88,9 @@ of a model is shared by all cutouts.
 ## Running a fit from the command line
 
 `container_entrypoint.py` wraps the function for FITS files. It reads a JSON
-config, runs one fit and writes `results.json` (plus a copy of the config as
-`config.used.json`) to a new output directory:
+config, runs one fit and writes `results.json`, a model and a residual image
+(FITS) for every cutout, and a copy of the config as `config.used.json` to a
+new output directory:
 
 ```bash
 python container_entrypoint.py --config run1/config.json --output-dir run1/output
@@ -162,7 +170,7 @@ flux units. In the far UV image the two objects are a single blob.
 
 *Each row is one cutout. Left: the data. Middle: the fitted model, on the same
 (arcsinh) brightness scale as the data. Right: the residual divided by the
-noise.*
+noise. The model and residual panels are the images returned by the fit.*
 
 One galaxy model and one point source are fit to the three cutouts together,
 starting 0.1" from the true positions with every other parameter initialized
@@ -242,6 +250,31 @@ The results of the example (shown with one parameter per line):
   angles in radians on the tangent plane, where `center` is the offset from
   `crval` with +x to the East and +y to the North. `PA` follows AstroPhot: it
   is measured from +y, counter-clockwise with +x drawn to the right.
+
+The fit also gives two images for every cutout, on the pixel grid of that
+cutout:
+
+- **model**: the fitted scene, all models together as blurred by the PSF of the
+  cutout, in the flux units of the cutout.
+- **residual**: `(data - model) * sqrt(weight)` with weight = 1 / variance, so
+  the residual in units of the noise. A good fit leaves values scattered around
+  zero with a standard deviation of 1, and the sum of their squares is the
+  chi-squared of the fit. Masked pixels are NaN.
+
+From Python these are the arrays in `images`. The command line writes them to
+the output directory as `<name>_model.fits` and `<name>_residual.fits`, each
+with the WCS of its cutout in the header. `<name>` is the cutout name with
+anything other than letters, digits and underscores replaced by an underscore
+(`GALEX-FUV` becomes `GALEX_FUV`), so `results.json` from the command line has
+one more entry which gives the file names under the names as they were given:
+
+```json
+  "images": {
+    "HST_F814W": {"model": "HST_F814W_model.fits", "residual": "HST_F814W_residual.fits"},
+    "ground_r": {"model": "ground_r_model.fits", "residual": "ground_r_residual.fits"},
+    "GALEX-FUV": {"model": "GALEX_FUV_model.fits", "residual": "GALEX_FUV_residual.fits"}
+  }
+```
 
 ## When it works well
 

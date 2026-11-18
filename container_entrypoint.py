@@ -92,6 +92,41 @@ def prepare_inputs(config, base_dir):
     return args
 
 
+# What each diagnostic image is, written into its FITS header
+IMAGE_KINDS = {
+    "model": "Fitted model of the cutout, in the flux units of the cutout",
+    "residual": "(data - model) * sqrt(weight), masked pixels are NaN",
+}
+
+
+def write_images(images, wcs, output_dir):
+    """
+    Write the model and residual image of every cutout as FITS files.
+
+    Each file is a single image with the WCS of its cutout, named
+    ``<cutout name>_model.fits`` and ``<cutout name>_residual.fits`` (with the
+    name made safe, as AstroPhot uses it). Returns the file names for each
+    cutout name, relative to the output directory.
+    """
+    from astropy.io import fits
+
+    from AstroPhot_tool.utils import safe_name
+
+    files = {}
+    for (name, cutout_images), cutout_wcs in zip(images.items(), wcs, strict=True):
+        files[name] = {}
+        for kind, description in IMAGE_KINDS.items():
+            # relax: also keep distortion terms of the input WCS (e.g. SIP)
+            header = cutout_wcs.to_header(relax=True)
+            header["CUTOUT"] = (name, "Cutout name")
+            header["IMGTYPE"] = (kind, "AstroPhot-tool output image")
+            header["COMMENT"] = description
+            file_name = f"{safe_name(name)}_{kind}.fits"
+            fits.PrimaryHDU(cutout_images[kind], header=header).writeto(output_dir / file_name)
+            files[name][kind] = file_name
+    return files
+
+
 def finite_or_none(value):
     """
     Replace NaN and infinite numbers by None (JSON null), at any depth.
@@ -147,7 +182,9 @@ def main():
         json.dump(config, stream, indent=2, allow_nan=False)
         stream.write("\n")
 
-    results = joint_multi_image(**kwargs)
+    results, images = joint_multi_image(**kwargs)
+    # Where each image was saved goes in the results, for the next stage
+    results["images"] = write_images(images, kwargs["wcs"], output_dir)
 
     # Never lose a finished fit to a single NaN: write those as null
     results, replaced = finite_or_none(results)

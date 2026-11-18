@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from astropy.io import fits
+from astropy.wcs import WCS
 
 import fake_data
 
@@ -37,7 +39,14 @@ def test_fit_from_fits_files(workdir, dataset, monkeypatch):
     run(monkeypatch, "--config", "input/config.json", "--output-dir", "output/run1")
 
     output = workdir / "output" / "run1"
-    assert sorted(p.name for p in output.iterdir()) == ["config.used.json", "results.json"]
+    image_files = [
+        f"{stem}_{kind}.fits"
+        for stem in ("HST_F814W", "ground_r", "GALEX_FUV")  # names made safe
+        for kind in ("model", "residual")
+    ]
+    assert sorted(p.name for p in output.iterdir()) == sorted(
+        ["config.used.json", "results.json", *image_files]
+    )
     assert json.loads((output / "config.used.json").read_text()) == config
     results = json.loads((output / "results.json").read_text())
     assert "success" in results["message"]
@@ -46,6 +55,33 @@ def test_fit_from_fits_files(workdir, dataset, monkeypatch):
     for key, truth in fake_data.STRUCTURE[0].items():
         assert galaxy["shared"][key]["value"] == pytest.approx(truth, rel=0.1)
     assert list(galaxy["per_image"]) == dataset["cutout_name"]  # names as given
+
+    # the model and residual images, where results.json says they are
+    assert list(results["images"]) == dataset["cutout_name"]  # names as given
+    chi2 = 0.0
+    for name, cutout, variance, wcs in zip(
+        dataset["cutout_name"], dataset["cutout"], dataset["variance"], dataset["wcs"]
+    ):
+        files = results["images"][name]
+        assert set(files) == {"model", "residual"}
+        model, model_header = fits.getdata(output / files["model"], header=True)
+        residual, residual_header = fits.getdata(output / files["residual"], header=True)
+        assert model.shape == residual.shape == cutout.shape
+        assert (model_header["IMGTYPE"], residual_header["IMGTYPE"]) == ("model", "residual")
+        assert model_header["CUTOUT"] == name
+        # (the inputs were read from float32 files)
+        np.testing.assert_allclose(
+            residual, (cutout - model) / np.sqrt(variance), rtol=1e-4, atol=1e-4
+        )
+        chi2 += np.sum(residual**2)
+        # on the pixel grid of the cutout
+        for header in (model_header, residual_header):
+            np.testing.assert_allclose(
+                WCS(header).pixel_to_world_values(3.0, 7.0), wcs.pixel_to_world_values(3.0, 7.0)
+            )
+    pixels = sum(c.size for c in dataset["cutout"])
+    assert chi2 / (pixels - 14) == pytest.approx(results["chi2_ndf"], rel=1e-6)
+
     # nothing is written beside the inputs or where the tool was started
     assert not list(workdir.glob("*.log")) and not list((workdir / "input").glob("*.log"))
 

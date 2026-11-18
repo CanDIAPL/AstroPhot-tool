@@ -353,3 +353,38 @@ def fit_results(
             }
         results["models"][name] = entry
     return results
+
+
+def fit_images(model: ap.Model, cutout_name: list[str]) -> dict[str, dict[str, np.ndarray]]:
+    """
+    Sample the model on the pixel grid of every cutout, as diagnostic images.
+
+    Parameters
+    ----------
+    model : ap.Model
+        Model from `build_model`, at the parameter values to draw (normally
+        after fitting).
+    cutout_name : list[str]
+        Cutout names as given by the user, used as keys in the output.
+
+    Returns
+    -------
+    dict[str, dict[str, np.ndarray]]
+        For each cutout name a dict of two arrays with the shape of that cutout:
+
+        - ``model``: the full scene (all models summed, PSF convolved) in the
+          flux units of the cutout.
+        - ``residual``: ``(data - model) * sqrt(weight)``, i.e. the residual in
+          units of the noise (weight = 1 / variance). The sum of its squares is
+          the chi squared of the fit. Masked pixels are NaN.
+    """
+    images = {}
+    samples = model().images
+    for name, tar, sample in zip(cutout_name, model.target.images, samples, strict=True):
+        # contiguous arrays of our own, not views of AstroPhot's (transposed) tensors
+        model_image = np.array(ap.backend.to_numpy(sample.data), dtype=np.float64, order="C")
+        data, weight = ap.backend.to_numpy(tar.data), ap.backend.to_numpy(tar.weight)
+        residual = (data - model_image) * np.sqrt(weight)
+        residual[ap.backend.to_numpy(tar.mask)] = np.nan
+        images[name] = {"model": model_image, "residual": residual}
+    return images
